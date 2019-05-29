@@ -37,7 +37,6 @@ import io.zeebe.test.util.AutoCloseableRule;
 import io.zeebe.util.ZbLogger;
 import io.zeebe.util.sched.clock.ControlledActorClock;
 import io.zeebe.util.sched.testing.ActorSchedulerRule;
-import java.time.Duration;
 import org.junit.rules.ExternalResource;
 import org.junit.rules.RuleChain;
 import org.junit.rules.TemporaryFolder;
@@ -64,11 +63,14 @@ public class StreamProcessorRule implements TestRule {
   private final ZeebeDbFactory zeebeDbFactory;
 
   // things provisioned by this rule
-  private static final String STREAM_NAME = "stream";
+  private static final String STREAM_NAME = "stream-";
 
   private TestStreams streams;
 
   private final SetupRule rule;
+  private final int startPartitionId;
+  private final int partitionCount;
+
   private ZeebeState zeebeState;
 
   public StreamProcessorRule() {
@@ -76,11 +78,14 @@ public class StreamProcessorRule implements TestRule {
   }
 
   public StreamProcessorRule(int partitionId) {
-    this(partitionId, DefaultZeebeDbFactory.DEFAULT_DB_FACTORY);
+    this(partitionId, 1, DefaultZeebeDbFactory.DEFAULT_DB_FACTORY);
   }
 
-  public StreamProcessorRule(int partitionId, ZeebeDbFactory dbFactory) {
-    rule = new SetupRule(partitionId);
+  public StreamProcessorRule(int startPartitionId, int partitionCount, ZeebeDbFactory dbFactory) {
+    this.startPartitionId = startPartitionId;
+    this.partitionCount = partitionCount;
+
+    rule = new SetupRule(startPartitionId, partitionCount);
 
     zeebeDbFactory = dbFactory;
     chain =
@@ -108,8 +113,13 @@ public class StreamProcessorRule implements TestRule {
   }
 
   public StreamProcessor startTypedStreamProcessor(TypedRecordProcessorFactory factory) {
+    return startTypedStreamProcessor(startPartitionId, factory);
+  }
+
+  public StreamProcessor startTypedStreamProcessor(
+      int partitionId, TypedRecordProcessorFactory factory) {
     return streams.startStreamProcessor(
-        STREAM_NAME,
+        getLogName(partitionId),
         STREAM_PROCESSOR_ID,
         zeebeDbFactory,
         (processingContext -> {
@@ -118,30 +128,16 @@ public class StreamProcessorRule implements TestRule {
         }));
   }
 
-  public StreamProcessor startTypedStreamProcessor(
-      TypedRecordProcessorFactory factory, int maxSnapshot, Duration snapshotPeriod) {
-    return streams.startStreamProcessor(
-        STREAM_NAME,
-        STREAM_PROCESSOR_ID,
-        zeebeDbFactory,
-        (processingContext -> {
-          zeebeState = processingContext.getZeebeState();
-          return factory.createProcessors(processingContext);
-        }),
-        maxSnapshot,
-        snapshotPeriod);
-  }
-
   public void closeStreamProcessor() throws Exception {
-    streams.closeProcessor(STREAM_NAME);
+    streams.closeProcessor(getLogName(startPartitionId));
   }
 
   public long getCommitPosition() {
-    return streams.getLogStream(STREAM_NAME).getCommitPosition();
+    return streams.getLogStream(getLogName(startPartitionId)).getCommitPosition();
   }
 
   public StateSnapshotController getStateSnapshotController() {
-    return streams.getStateSnapshotController(STREAM_NAME);
+    return streams.getStateSnapshotController(getLogName(startPartitionId));
   }
 
   public CommandResponseWriter getCommandResponseWriter() {
@@ -157,20 +153,22 @@ public class StreamProcessorRule implements TestRule {
   }
 
   public RecordStream events() {
-    return new RecordStream(streams.events(STREAM_NAME));
+    return new RecordStream(streams.events(getLogName(startPartitionId)));
   }
 
   public void printAllRecords() {
-    final LogStream logStream = streams.getLogStream(STREAM_NAME);
+    final LogStream logStream = streams.getLogStream(getLogName(startPartitionId));
     LogStreamPrinter.printRecords(logStream);
   }
 
   private class SetupRule extends ExternalResource {
 
-    private final int partitionId;
+    private final int startPartitionId;
+    private final int partitionCount;
 
-    SetupRule(int partitionId) {
-      this.partitionId = partitionId;
+    SetupRule(int startPartitionId, int partitionCount) {
+      this.startPartitionId = startPartitionId;
+      this.partitionCount = partitionCount;
     }
 
     @Override
@@ -178,7 +176,11 @@ public class StreamProcessorRule implements TestRule {
       streams =
           new TestStreams(
               tempFolder, closeables, serviceContainerRule.get(), actorSchedulerRule.get());
-      streams.createLogStream(STREAM_NAME, partitionId);
+
+      int partitionId = startPartitionId;
+      for (int i = 0; i < partitionCount; i++) {
+        streams.createLogStream(getLogName(partitionId), partitionId++);
+      }
     }
   }
 
@@ -203,7 +205,7 @@ public class StreamProcessorRule implements TestRule {
   public long writeWorkflowInstanceEventWithSource(
       WorkflowInstanceIntent intent, int instanceKey, long sourceEventPosition) {
     return streams
-        .newRecord(STREAM_NAME)
+        .newRecord(getLogName(startPartitionId))
         .event(workflowInstance(instanceKey))
         .recordType(RecordType.EVENT)
         .sourceRecordPosition(sourceEventPosition)
@@ -215,7 +217,7 @@ public class StreamProcessorRule implements TestRule {
   public long writeWorkflowInstanceEventWithDifferentProducerId(
       WorkflowInstanceIntent intent, int instanceKey, int producer) {
     return streams
-        .newRecord(STREAM_NAME)
+        .newRecord(getLogName(startPartitionId))
         .event(workflowInstance(instanceKey))
         .recordType(RecordType.EVENT)
         .intent(intent)
@@ -226,7 +228,7 @@ public class StreamProcessorRule implements TestRule {
   public long writeWorkflowInstanceEventWithDifferentProducerIdAndSource(
       WorkflowInstanceIntent intent, int instanceKey, int producer, long sourceEventPosition) {
     return streams
-        .newRecord(STREAM_NAME)
+        .newRecord(getLogName(startPartitionId))
         .event(workflowInstance(instanceKey))
         .recordType(RecordType.EVENT)
         .sourceRecordPosition(sourceEventPosition)
@@ -237,7 +239,7 @@ public class StreamProcessorRule implements TestRule {
 
   public long writeWorkflowInstanceEvent(WorkflowInstanceIntent intent, int instanceKey) {
     return streams
-        .newRecord(STREAM_NAME)
+        .newRecord(getLogName(startPartitionId))
         .event(workflowInstance(instanceKey))
         .recordType(RecordType.EVENT)
         .intent(intent)
@@ -247,7 +249,7 @@ public class StreamProcessorRule implements TestRule {
 
   public long writeEvent(long key, Intent intent, UnpackedObject value) {
     return streams
-        .newRecord(STREAM_NAME)
+        .newRecord(getLogName(startPartitionId))
         .recordType(RecordType.EVENT)
         .key(key)
         .intent(intent)
@@ -258,7 +260,7 @@ public class StreamProcessorRule implements TestRule {
 
   public long writeEvent(Intent intent, UnpackedObject value) {
     return streams
-        .newRecord(STREAM_NAME)
+        .newRecord(getLogName(startPartitionId))
         .recordType(RecordType.EVENT)
         .intent(intent)
         .event(value)
@@ -266,9 +268,18 @@ public class StreamProcessorRule implements TestRule {
         .write();
   }
 
+  public long writeCommandOnPartition(int partition, Intent intent, UnpackedObject value) {
+    return streams
+        .newRecord(getLogName(partition))
+        .recordType(RecordType.COMMAND)
+        .intent(intent)
+        .event(value)
+        .write();
+  }
+
   public long writeCommand(long key, Intent intent, UnpackedObject value) {
     return streams
-        .newRecord(STREAM_NAME)
+        .newRecord(getLogName(startPartitionId))
         .recordType(RecordType.COMMAND)
         .key(key)
         .intent(intent)
@@ -278,10 +289,14 @@ public class StreamProcessorRule implements TestRule {
 
   public long writeCommand(Intent intent, UnpackedObject value) {
     return streams
-        .newRecord(STREAM_NAME)
+        .newRecord(getLogName(startPartitionId))
         .recordType(RecordType.COMMAND)
         .intent(intent)
         .event(value)
         .write();
+  }
+
+  private static String getLogName(int partitionId) {
+    return STREAM_NAME + partitionId;
   }
 }

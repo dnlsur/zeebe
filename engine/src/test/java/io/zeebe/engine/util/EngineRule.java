@@ -19,10 +19,6 @@ package io.zeebe.engine.util;
 
 import static io.zeebe.engine.processor.TypedEventRegistry.EVENT_REGISTRY;
 import static io.zeebe.util.buffer.BufferUtil.wrapString;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -31,7 +27,9 @@ import io.zeebe.engine.processor.StreamProcessorLifecycleAware;
 import io.zeebe.engine.processor.workflow.EngineProcessors;
 import io.zeebe.engine.processor.workflow.deployment.distribute.DeploymentDistributor;
 import io.zeebe.engine.processor.workflow.deployment.distribute.PendingDeploymentDistribution;
+import io.zeebe.engine.processor.workflow.message.command.PartitionCommandSender;
 import io.zeebe.engine.processor.workflow.message.command.SubscriptionCommandSender;
+import io.zeebe.engine.state.DefaultZeebeDbFactory;
 import io.zeebe.exporter.api.record.Record;
 import io.zeebe.exporter.api.record.value.DeploymentRecordValue;
 import io.zeebe.exporter.api.record.value.JobRecordValue;
@@ -43,7 +41,6 @@ import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.model.bpmn.Bpmn;
 import io.zeebe.model.bpmn.BpmnModelInstance;
 import io.zeebe.protocol.Protocol;
-import io.zeebe.protocol.clientapi.ValueType;
 import io.zeebe.protocol.impl.record.RecordMetadata;
 import io.zeebe.protocol.impl.record.UnifiedRecordValue;
 import io.zeebe.protocol.impl.record.value.deployment.DeploymentRecord;
@@ -55,11 +52,15 @@ import io.zeebe.protocol.intent.WorkflowInstanceCreationIntent;
 import io.zeebe.test.util.record.RecordingExporter;
 import io.zeebe.test.util.record.RecordingExporterTestWatcher;
 import io.zeebe.util.ReflectUtil;
+import io.zeebe.util.buffer.BufferWriter;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.ActorControl;
+import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import java.time.Duration;
-import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
@@ -70,18 +71,25 @@ import org.junit.runners.model.Statement;
 public class EngineRule extends ExternalResource implements StreamProcessorLifecycleAware {
 
   private static final int PARTITION_ID = Protocol.DEPLOYMENT_PARTITION;
+  private static final RecordingExporter RECORDING_EXPORTER = new RecordingExporter();
 
   protected final RecordingExporterTestWatcher recordingExporterTestWatcher =
       new RecordingExporterTestWatcher();
-  private static final RecordingExporter RECORDING_EXPORTER = new RecordingExporter();
+  private final StreamProcessorRule environmentRule;
 
   private BufferedLogStreamReader logStreamReader;
+  private final int partitionCount;
 
-  private final StreamProcessorRule environmentRule = new StreamProcessorRule(PARTITION_ID);
+  public EngineRule() {
+    this(1);
+  }
 
-  private SubscriptionCommandSender mockSubscriptionCommandSender;
-  private DeploymentDistributor mockDeploymentDistributor;
-  private EnumMap<ValueType, UnifiedRecordValue> eventCache;
+  public EngineRule(int partitionCount) {
+    this.partitionCount = partitionCount;
+    environmentRule =
+        new StreamProcessorRule(
+            PARTITION_ID, partitionCount, DefaultZeebeDbFactory.DEFAULT_DB_FACTORY);
+  }
 
   @Override
   public Statement apply(Statement base, Description description) {
@@ -94,25 +102,6 @@ public class EngineRule extends ExternalResource implements StreamProcessorLifec
 
   @Override
   protected void before() {
-    mockSubscriptionCommandSender = mock(SubscriptionCommandSender.class);
-
-    when(mockSubscriptionCommandSender.openMessageSubscription(
-            anyInt(), anyLong(), anyLong(), any(), any(), anyBoolean()))
-        .thenReturn(true);
-    when(mockSubscriptionCommandSender.correlateMessageSubscription(
-            anyInt(), anyLong(), anyLong(), any()))
-        .thenReturn(true);
-    when(mockSubscriptionCommandSender.closeMessageSubscription(
-            anyInt(), anyLong(), anyLong(), any(DirectBuffer.class)))
-        .thenReturn(true);
-    when(mockSubscriptionCommandSender.rejectCorrelateMessageSubscription(
-            anyLong(), anyLong(), anyLong(), any(), any()))
-        .thenReturn(true);
-
-    mockDeploymentDistributor = mock(DeploymentDistributor.class);
-
-    when(mockDeploymentDistributor.pushDeployment(anyLong(), anyLong(), any()))
-        .thenReturn(CompletableActorFuture.completed(null));
 
     final DeploymentRecord deploymentRecord = new DeploymentRecord();
     final UnsafeBuffer deploymentBuffer = new UnsafeBuffer(new byte[deploymentRecord.getLength()]);
@@ -121,14 +110,28 @@ public class EngineRule extends ExternalResource implements StreamProcessorLifec
     final PendingDeploymentDistribution deploymentDistribution =
         mock(PendingDeploymentDistribution.class);
     when(deploymentDistribution.getDeployment()).thenReturn(deploymentBuffer);
-    when(mockDeploymentDistributor.removePendingDeployment(anyLong()))
-        .thenReturn(deploymentDistribution);
 
-    environmentRule.startTypedStreamProcessor(
-        (processingContext) ->
-            EngineProcessors.createEngineProcessors(
-                    processingContext, 1, mockSubscriptionCommandSender, mockDeploymentDistributor)
-                .withListener(this));
+    forEachPartition(
+        partitonId -> {
+          final int currentPartitionId = partitonId;
+          environmentRule.startTypedStreamProcessor(
+              partitonId,
+              (processingContext) ->
+                  EngineProcessors.createEngineProcessors(
+                          processingContext,
+                          partitionCount,
+                          new SubscriptionCommandSender(
+                              currentPartitionId, new PartitionCommandSenderImpl()),
+                          new DeploymentDistributionImpl())
+                      .withListener(this));
+        });
+  }
+
+  private void forEachPartition(Consumer<Integer> partitionIdConsumer) {
+    int partitonId = PARTITION_ID;
+    for (int i = 0; i < partitionCount; i++) {
+      partitionIdConsumer.accept(partitonId++);
+    }
   }
 
   public Record<DeploymentRecordValue> deploy(final BpmnModelInstance modelInstance) {
@@ -168,6 +171,51 @@ public class EngineRule extends ExternalResource implements StreamProcessorLifec
     return RecordingExporter.jobRecords().withType(type).withIntent(JobIntent.COMPLETED).getFirst();
   }
 
+  private class DeploymentDistributionImpl implements DeploymentDistributor {
+
+    private final Map<Long, PendingDeploymentDistribution> pendingDeployments = new HashMap<>();
+
+    @Override
+    public ActorFuture<Void> pushDeployment(long key, long position, DirectBuffer buffer) {
+      final PendingDeploymentDistribution pendingDeployment =
+          new PendingDeploymentDistribution(buffer, position);
+      pendingDeployments.put(key, pendingDeployment);
+
+      forEachPartition(
+          partitionId -> {
+            if (partitionId == PARTITION_ID) {
+              return;
+            }
+
+            final DeploymentRecord deploymentRecord = new DeploymentRecord();
+            deploymentRecord.wrap(buffer);
+
+            environmentRule.writeCommandOnPartition(
+                partitionId, DeploymentIntent.CREATE, deploymentRecord);
+
+            RecordingExporter.deploymentRecords(DeploymentIntent.CREATED)
+                .withPartitionId(partitionId)
+                .getFirst();
+          });
+
+      return CompletableActorFuture.completed(null);
+    }
+
+    @Override
+    public PendingDeploymentDistribution removePendingDeployment(long key) {
+      return pendingDeployments.remove(key);
+    }
+  }
+
+  private class PartitionCommandSenderImpl implements PartitionCommandSender {
+
+    @Override
+    public boolean sendCommand(int receiverPartitionId, BufferWriter command) {
+      //      environmentRule.writeCommand()
+      return false;
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////// PROCESSOR LIFECYCLE ////////////////////////////////////////
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -175,9 +223,6 @@ public class EngineRule extends ExternalResource implements StreamProcessorLifec
   @Override
   public void onOpen(ReadonlyProcessingContext context) {
     final ActorControl actor = context.getActor();
-
-    eventCache = new EnumMap<>(ValueType.class);
-    EVENT_REGISTRY.forEach((t, c) -> eventCache.put(t, ReflectUtil.newInstance(c)));
 
     final ActorCondition onCommitCondition =
         actor.onCondition("on-commit", this::onNewEventCommitted);
