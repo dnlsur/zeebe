@@ -118,7 +118,10 @@ public class MessageCorrelationMultiplePartitionsTest {
     engine.forEachPartition(
         partitionId ->
             engine.publishMessage(
-                partitionId, "message", CORRELATION_KEYS.get(partitionId), asMsgPack("p", "p0")));
+                partitionId,
+                "message",
+                CORRELATION_KEYS.get(partitionId),
+                asMsgPack("p", "p" + partitionId)));
 
     // when
     final long wfiKey1 =
@@ -155,7 +158,7 @@ public class MessageCorrelationMultiplePartitionsTest {
             WorkflowInstances.getCurrentVariables(wfiKey2).get("p"),
             WorkflowInstances.getCurrentVariables(wfiKey3).get("p"));
 
-    assertThat(correlatedValues).contains("\"p0\"", "\"p1\"", "\"p2\"");
+    assertThat(correlatedValues).contains("\"p1\"", "\"p2\"", "\"p3\"");
   }
 
   private int getPartitionId(final String correlationKey) {
