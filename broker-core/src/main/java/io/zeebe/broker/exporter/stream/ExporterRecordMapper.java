@@ -269,8 +269,8 @@ public class ExporterRecordMapper {
 
     return new MessageSubscriptionRecordValueImpl(
         objectMapper,
-        asString(record.getMessageName()),
-        asString(record.getCorrelationKey()),
+        asString(record.getMessageNameBuffer()),
+        asString(record.getCorrelationKeyBuffer()),
         record.getWorkflowInstanceKey(),
         record.getElementInstanceKey());
   }

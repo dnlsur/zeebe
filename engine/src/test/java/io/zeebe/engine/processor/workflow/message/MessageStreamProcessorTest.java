@@ -127,7 +127,7 @@ public class MessageStreamProcessorTest {
         .correlateWorkflowInstanceSubscription(
             subscription.getWorkflowInstanceKey(),
             subscription.getElementInstanceKey(),
-            subscription.getMessageName(),
+            subscription.getMessageNameBuffer(),
             messageKey,
             message.getVariables());
   }
@@ -161,7 +161,7 @@ public class MessageStreamProcessorTest {
         .correlateWorkflowInstanceSubscription(
             subscription.getWorkflowInstanceKey(),
             subscription.getElementInstanceKey(),
-            subscription.getMessageName(),
+            subscription.getMessageNameBuffer(),
             messageKey,
             message.getVariables());
   }
@@ -251,7 +251,7 @@ public class MessageStreamProcessorTest {
         .correlateWorkflowInstanceSubscription(
             subscription.getWorkflowInstanceKey(),
             subscription.getElementInstanceKey(),
-            subscription.getMessageName(),
+            subscription.getMessageNameBuffer(),
             messageKey,
             message.getVariables());
   }
@@ -288,7 +288,7 @@ public class MessageStreamProcessorTest {
         .correlateWorkflowInstanceSubscription(
             subscription.getWorkflowInstanceKey(),
             subscription.getElementInstanceKey(),
-            subscription.getMessageName(),
+            subscription.getMessageNameBuffer(),
             firstMessageKey,
             message.getVariables());
 
@@ -296,7 +296,7 @@ public class MessageStreamProcessorTest {
         .correlateWorkflowInstanceSubscription(
             subscription.getWorkflowInstanceKey(),
             subscription.getElementInstanceKey(),
-            subscription.getMessageName(),
+            subscription.getMessageNameBuffer(),
             lastMessageKey,
             message.getVariables());
   }
@@ -434,7 +434,7 @@ public class MessageStreamProcessorTest {
             variablesCaptor.capture());
 
     assertThat(variablesCaptor.getAllValues().get(0)).isEqualTo(first.getVariables());
-    assertThat(nameCaptor.getValue()).isEqualTo(subscription.getMessageName());
+    assertThat(nameCaptor.getValue()).isEqualTo(subscription.getMessageNameBuffer());
     assertThat(BufferUtil.equals(nameCaptor.getAllValues().get(1), second.getName())).isTrue();
     assertThat(BufferUtil.equals(variablesCaptor.getAllValues().get(1), second.getVariables()))
         .isTrue();
