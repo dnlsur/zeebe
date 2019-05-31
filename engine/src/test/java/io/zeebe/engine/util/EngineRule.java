@@ -36,6 +36,7 @@ import io.zeebe.exporter.api.record.value.DeploymentRecordValue;
 import io.zeebe.exporter.api.record.value.JobRecordValue;
 import io.zeebe.exporter.api.record.value.WorkflowInstanceCreationRecordValue;
 import io.zeebe.exporter.api.record.value.deployment.ResourceType;
+import io.zeebe.logstreams.impl.Loggers;
 import io.zeebe.logstreams.log.BufferedLogStreamReader;
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.logstreams.log.LoggedEvent;
@@ -69,7 +70,7 @@ import org.junit.rules.ExternalResource;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 
-public class EngineRule extends ExternalResource implements StreamProcessorLifecycleAware {
+public class EngineRule extends ExternalResource {
 
   private static final int PARTITION_ID = Protocol.DEPLOYMENT_PARTITION;
   private static final RecordingExporter RECORDING_EXPORTER = new RecordingExporter();
@@ -78,7 +79,6 @@ public class EngineRule extends ExternalResource implements StreamProcessorLifec
       new RecordingExporterTestWatcher();
   private final StreamProcessorRule environmentRule;
 
-  private BufferedLogStreamReader logStreamReader;
   private final int partitionCount;
 
   public EngineRule() {
@@ -124,7 +124,7 @@ public class EngineRule extends ExternalResource implements StreamProcessorLifec
                           new SubscriptionCommandSender(
                               currentPartitionId, new PartitionCommandSenderImpl()),
                           new DeploymentDistributionImpl())
-                      .withListener(this));
+                      .withListener(new ProcessingExporterTransistor()));
         });
   }
 
@@ -226,58 +226,65 @@ public class EngineRule extends ExternalResource implements StreamProcessorLifec
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  //////////////////////////////////// PROCESSOR LIFECYCLE ////////////////////////////////////////
+  //////////////////////////////// PROCESSOR EXPORTER CROSSOVER ///////////////////////////////////
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
-  @Override
-  public void onOpen(ReadonlyProcessingContext context) {
-    final ActorControl actor = context.getActor();
+  private static class ProcessingExporterTransistor implements StreamProcessorLifecycleAware {
 
-    final ActorCondition onCommitCondition =
-        actor.onCondition("on-commit", this::onNewEventCommitted);
-    final LogStream logStream = context.getLogStream();
-    logStream.registerOnCommitPositionUpdatedCondition(onCommitCondition);
+    private BufferedLogStreamReader logStreamReader;
 
-    logStreamReader = new BufferedLogStreamReader(logStream);
-  }
+    @Override
+    public void onOpen(ReadonlyProcessingContext context) {
+      final ActorControl actor = context.getActor();
 
-  private void onNewEventCommitted() {
-    while (logStreamReader.hasNext()) {
-      final LoggedEvent rawEvent = logStreamReader.next();
+      final ActorCondition onCommitCondition =
+          actor.onCondition("on-commit", this::onNewEventCommitted);
+      final LogStream logStream = context.getLogStream();
+      logStream.registerOnCommitPositionUpdatedCondition(onCommitCondition);
 
-      final CopiedTypedEvent typedRecord = createCopiedEvent(rawEvent);
-      RECORDING_EXPORTER.export(typedRecord);
+      logStreamReader = new BufferedLogStreamReader(logStream);
     }
-  }
 
-  private CopiedTypedEvent createCopiedEvent(LoggedEvent rawEvent) {
-    // we have to access the underlying buffer and copy the metadata and value bytes
-    // otherwise next event will overwrite the event before, since UnpackedObject
-    // and RecordMetadata has properties (buffers, StringProperty etc.) which only wraps the given
-    // buffer instead of copying it
+    private void onNewEventCommitted() {
+      while (logStreamReader.hasNext()) {
+        final LoggedEvent rawEvent = logStreamReader.next();
 
-    final DirectBuffer contentBuffer = rawEvent.getValueBuffer();
+        final CopiedTypedEvent typedRecord = createCopiedEvent(rawEvent);
 
-    final byte[] metadataBytes = new byte[rawEvent.getMetadataLength()];
-    contentBuffer.getBytes(rawEvent.getMetadataOffset(), metadataBytes);
-    final DirectBuffer metadataBuffer = new UnsafeBuffer(metadataBytes);
+        Loggers.LOGSTREAMS_LOGGER.warn("Export: {}", typedRecord);
+        RECORDING_EXPORTER.export(typedRecord);
+      }
+    }
 
-    final RecordMetadata metadata = new RecordMetadata();
-    metadata.wrap(metadataBuffer, 0, metadataBuffer.capacity());
+    private CopiedTypedEvent createCopiedEvent(LoggedEvent rawEvent) {
+      // we have to access the underlying buffer and copy the metadata and value bytes
+      // otherwise next event will overwrite the event before, since UnpackedObject
+      // and RecordMetadata has properties (buffers, StringProperty etc.) which only wraps the given
+      // buffer instead of copying it
 
-    final byte[] valueBytes = new byte[rawEvent.getValueLength()];
-    contentBuffer.getBytes(rawEvent.getValueOffset(), valueBytes);
-    final DirectBuffer valueBuffer = new UnsafeBuffer(valueBytes);
+      final DirectBuffer contentBuffer = rawEvent.getValueBuffer();
 
-    final UnifiedRecordValue recordValue =
-        ReflectUtil.newInstance(EVENT_REGISTRY.get(metadata.getValueType()));
-    recordValue.wrap(valueBuffer);
+      final byte[] metadataBytes = new byte[rawEvent.getMetadataLength()];
+      contentBuffer.getBytes(rawEvent.getMetadataOffset(), metadataBytes);
+      final DirectBuffer metadataBuffer = new UnsafeBuffer(metadataBytes);
 
-    return new CopiedTypedEvent(
-        recordValue,
-        metadata,
-        rawEvent.getKey(),
-        rawEvent.getPosition(),
-        rawEvent.getSourceEventPosition());
+      final RecordMetadata metadata = new RecordMetadata();
+      metadata.wrap(metadataBuffer, 0, metadataBuffer.capacity());
+
+      final byte[] valueBytes = new byte[rawEvent.getValueLength()];
+      contentBuffer.getBytes(rawEvent.getValueOffset(), valueBytes);
+      final DirectBuffer valueBuffer = new UnsafeBuffer(valueBytes);
+
+      final UnifiedRecordValue recordValue =
+          ReflectUtil.newInstance(EVENT_REGISTRY.get(metadata.getValueType()));
+      recordValue.wrap(valueBuffer);
+
+      return new CopiedTypedEvent(
+          recordValue,
+          metadata,
+          rawEvent.getKey(),
+          rawEvent.getPosition(),
+          rawEvent.getSourceEventPosition());
+    }
   }
 }

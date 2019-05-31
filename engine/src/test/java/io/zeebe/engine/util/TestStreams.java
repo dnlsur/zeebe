@@ -88,27 +88,26 @@ public class TestStreams {
     VALUE_TYPES.put(UnpackedObject.class, ValueType.NOOP);
   }
 
-  protected final TemporaryFolder storageDirectory;
-  protected final AutoCloseableRule closeables;
+  private final TemporaryFolder dataDirectory;
+  private final AutoCloseableRule closeables;
   private final ServiceContainer serviceContainer;
 
   private final Map<String, LogStream> managedLogs = new HashMap<>();
   private final Map<String, StateSnapshotController> snapshotControllerMap = new HashMap<>();
 
-  protected ActorScheduler actorScheduler;
+  private final ActorScheduler actorScheduler;
 
-  protected StateStorageFactory stateStorageFactory;
-  public static final String PROCESSOR_NAME = "processor";
+  private static final String PROCESSOR_NAME = "processor";
   private final CommandResponseWriter mockCommandResponseWriter;
   private ZeebeDb zeebeDb;
   private AsyncSnapshotDirector asyncSnapshotDirector;
 
   public TestStreams(
-      final TemporaryFolder storageDirectory,
+      final TemporaryFolder dataDirectory,
       final AutoCloseableRule closeables,
       final ServiceContainer serviceContainer,
       final ActorScheduler actorScheduler) {
-    this.storageDirectory = storageDirectory;
+    this.dataDirectory = dataDirectory;
     this.closeables = closeables;
     this.serviceContainer = serviceContainer;
     this.actorScheduler = actorScheduler;
@@ -138,9 +137,9 @@ public class TestStreams {
     File segments = null, index = null, snapshots = null;
 
     try {
-      segments = storageDirectory.newFolder("segments");
-      index = storageDirectory.newFolder("index", "runtime");
-      snapshots = storageDirectory.newFolder("index", "snapshots");
+      segments = dataDirectory.newFolder(name, "segments");
+      index = dataDirectory.newFolder(name, "index", "runtime");
+      snapshots = dataDirectory.newFolder(name, "index", "snapshots");
     } catch (IOException e) {
       e.printStackTrace();
     }
@@ -239,15 +238,14 @@ public class TestStreams {
     return new FluentLogWriter(logStream);
   }
 
-  protected StateStorageFactory getStateStorageFactory() {
-    if (stateStorageFactory == null) {
-      final File rocksDBDirectory = new File(storageDirectory.getRoot(), "state");
-      if (!rocksDBDirectory.exists()) {
-        rocksDBDirectory.mkdir();
-      }
-
-      stateStorageFactory = new StateStorageFactory(rocksDBDirectory);
+  protected StateStorageFactory getStateStorageFactory(LogStream stream) {
+    final File rocksDBDirectory;
+    try {
+      rocksDBDirectory = dataDirectory.newFolder(stream.getLogName(), "state");
+    } catch (IOException e) {
+      throw new RuntimeException(e);
     }
+    StateStorageFactory stateStorageFactory = new StateStorageFactory(rocksDBDirectory);
 
     return stateStorageFactory;
   }
@@ -293,7 +291,7 @@ public class TestStreams {
       final Duration snapshotInterval) {
 
     final StateStorage stateStorage =
-        getStateStorageFactory().create(streamProcessorId, PROCESSOR_NAME);
+        getStateStorageFactory(stream).create(streamProcessorId, PROCESSOR_NAME);
     final StateSnapshotController currentSnapshotController =
         spy(new StateSnapshotController(zeebeDbFactory, stateStorage));
     snapshotControllerMap.put(stream.getLogName(), currentSnapshotController);

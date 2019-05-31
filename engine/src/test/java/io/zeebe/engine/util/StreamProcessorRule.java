@@ -161,8 +161,11 @@ public class StreamProcessorRule implements TestRule {
   }
 
   public void printAllRecords() {
-    final LogStream logStream = streams.getLogStream(getLogName(startPartitionId));
-    LogStreamPrinter.printRecords(logStream);
+    int partitionId = startPartitionId;
+    for (int i = 0; i < partitionCount; i++) {
+      final LogStream logStream = streams.getLogStream(getLogName(partitionId++));
+      LogStreamPrinter.printRecords(logStream);
+    }
   }
 
   private class SetupRule extends ExternalResource {
