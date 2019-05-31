@@ -129,7 +129,7 @@ public class MessageStreamProcessorTest {
             subscription.getElementInstanceKey(),
             subscription.getMessageNameBuffer(),
             messageKey,
-            message.getVariables());
+            message.getVariablesBuffer());
   }
 
   @Test
@@ -163,7 +163,7 @@ public class MessageStreamProcessorTest {
             subscription.getElementInstanceKey(),
             subscription.getMessageNameBuffer(),
             messageKey,
-            message.getVariables());
+            message.getVariablesBuffer());
   }
 
   @Test
@@ -253,7 +253,7 @@ public class MessageStreamProcessorTest {
             subscription.getElementInstanceKey(),
             subscription.getMessageNameBuffer(),
             messageKey,
-            message.getVariables());
+            message.getVariablesBuffer());
   }
 
   @Test
@@ -290,7 +290,7 @@ public class MessageStreamProcessorTest {
             subscription.getElementInstanceKey(),
             subscription.getMessageNameBuffer(),
             firstMessageKey,
-            message.getVariables());
+            message.getVariablesBuffer());
 
     verify(mockSubscriptionCommandSender, timeout(5_000))
         .correlateWorkflowInstanceSubscription(
@@ -298,7 +298,7 @@ public class MessageStreamProcessorTest {
             subscription.getElementInstanceKey(),
             subscription.getMessageNameBuffer(),
             lastMessageKey,
-            message.getVariables());
+            message.getVariablesBuffer());
   }
 
   @Test
@@ -433,10 +433,12 @@ public class MessageStreamProcessorTest {
             eq(lastMessageKey),
             variablesCaptor.capture());
 
-    assertThat(variablesCaptor.getAllValues().get(0)).isEqualTo(first.getVariables());
+    assertThat(variablesCaptor.getAllValues().get(0)).isEqualTo(first.getVariablesBuffer());
     assertThat(nameCaptor.getValue()).isEqualTo(subscription.getMessageNameBuffer());
-    assertThat(BufferUtil.equals(nameCaptor.getAllValues().get(1), second.getName())).isTrue();
-    assertThat(BufferUtil.equals(variablesCaptor.getAllValues().get(1), second.getVariables()))
+    assertThat(BufferUtil.equals(nameCaptor.getAllValues().get(1), second.getNameBuffer()))
+        .isTrue();
+    assertThat(
+            BufferUtil.equals(variablesCaptor.getAllValues().get(1), second.getVariablesBuffer()))
         .isTrue();
   }
 
