@@ -34,6 +34,7 @@ import io.zeebe.engine.state.DefaultZeebeDbFactory;
 import io.zeebe.exporter.api.record.Record;
 import io.zeebe.exporter.api.record.value.DeploymentRecordValue;
 import io.zeebe.exporter.api.record.value.JobRecordValue;
+import io.zeebe.exporter.api.record.value.MessageRecordValue;
 import io.zeebe.exporter.api.record.value.WorkflowInstanceCreationRecordValue;
 import io.zeebe.exporter.api.record.value.deployment.ResourceType;
 import io.zeebe.logstreams.impl.Loggers;
@@ -47,9 +48,11 @@ import io.zeebe.protocol.impl.record.RecordMetadata;
 import io.zeebe.protocol.impl.record.UnifiedRecordValue;
 import io.zeebe.protocol.impl.record.value.deployment.DeploymentRecord;
 import io.zeebe.protocol.impl.record.value.job.JobRecord;
+import io.zeebe.protocol.impl.record.value.message.MessageRecord;
 import io.zeebe.protocol.impl.record.value.workflowinstance.WorkflowInstanceCreationRecord;
 import io.zeebe.protocol.intent.DeploymentIntent;
 import io.zeebe.protocol.intent.JobIntent;
+import io.zeebe.protocol.intent.MessageIntent;
 import io.zeebe.protocol.intent.WorkflowInstanceCreationIntent;
 import io.zeebe.test.util.record.RecordingExporter;
 import io.zeebe.test.util.record.RecordingExporterTestWatcher;
@@ -61,9 +64,12 @@ import io.zeebe.util.sched.future.ActorFuture;
 import io.zeebe.util.sched.future.CompletableActorFuture;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.rules.ExternalResource;
@@ -74,6 +80,7 @@ public class EngineRule extends ExternalResource {
 
   private static final int PARTITION_ID = Protocol.DEPLOYMENT_PARTITION;
   private static final RecordingExporter RECORDING_EXPORTER = new RecordingExporter();
+  public static final Duration DEFAULT_MSG_TTL = Duration.ofHours(1);
 
   protected final RecordingExporterTestWatcher recordingExporterTestWatcher =
       new RecordingExporterTestWatcher();
@@ -94,8 +101,6 @@ public class EngineRule extends ExternalResource {
 
   @Override
   public Statement apply(Statement base, Description description) {
-    RECORDING_EXPORTER.maxWait = Duration.ofMillis(1000).toMillis();
-
     Statement statement = recordingExporterTestWatcher.apply(base, description);
     statement = super.apply(statement, description);
     return environmentRule.apply(statement, description);
@@ -128,10 +133,10 @@ public class EngineRule extends ExternalResource {
         });
   }
 
-  private void forEachPartition(Consumer<Integer> partitionIdConsumer) {
-    int partitonId = PARTITION_ID;
+  public void forEachPartition(Consumer<Integer> partitionIdConsumer) {
+    int partitionId = PARTITION_ID;
     for (int i = 0; i < partitionCount; i++) {
-      partitionIdConsumer.accept(partitonId++);
+      partitionIdConsumer.accept(partitionId++);
     }
   }
 
@@ -146,7 +151,9 @@ public class EngineRule extends ExternalResource {
 
     environmentRule.writeCommand(DeploymentIntent.CREATE, deploymentRecord);
 
-    return RecordingExporter.deploymentRecords(DeploymentIntent.CREATED).getFirst();
+    return RecordingExporter.deploymentRecords(DeploymentIntent.DISTRIBUTED)
+        .withPartitionId(PARTITION_ID)
+        .getFirst();
   }
 
   public Record<WorkflowInstanceCreationRecordValue> createWorkflowInstance(
@@ -170,6 +177,29 @@ public class EngineRule extends ExternalResource {
     environmentRule.writeCommand(createdEvent.getKey(), JobIntent.COMPLETE, jobRecord);
 
     return RecordingExporter.jobRecords().withType(type).withIntent(JobIntent.COMPLETED).getFirst();
+  }
+
+  public Record<MessageRecordValue> publishMessage(
+      int partitionId, String messageName, String correlationKey, DirectBuffer variables) {
+    final MessageRecord messageRecord =
+        new MessageRecord()
+            .setName(messageName)
+            .setCorrelationKey(correlationKey)
+            .setVariables(variables)
+            .setTimeToLive(DEFAULT_MSG_TTL.toMillis());
+
+    environmentRule.writeCommandOnPartition(partitionId, MessageIntent.PUBLISH, messageRecord);
+
+    return RecordingExporter.messageRecords(MessageIntent.PUBLISH)
+        .withPartitionId(partitionId)
+        .withCorrelationKey(correlationKey)
+        .getFirst();
+  }
+
+  public List<Integer> getPartitionIds() {
+    return IntStream.range(PARTITION_ID, PARTITION_ID + partitionCount)
+        .boxed()
+        .collect(Collectors.toList());
   }
 
   private class DeploymentDistributionImpl implements DeploymentDistributor {
