@@ -80,7 +80,7 @@ public class TestStreams {
   private static final Duration SNAPSHOT_INTERVAL = Duration.ofMinutes(1);
   private static final int MAX_SNAPSHOTS = 1;
 
-  protected static final Map<Class<?>, ValueType> VALUE_TYPES = new HashMap<>();
+  private static final Map<Class<?>, ValueType> VALUE_TYPES = new HashMap<>();
 
   static {
     TypedEventRegistry.EVENT_REGISTRY.forEach((v, c) -> VALUE_TYPES.put(c, v));
@@ -245,9 +245,8 @@ public class TestStreams {
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
-    StateStorageFactory stateStorageFactory = new StateStorageFactory(rocksDBDirectory);
 
-    return stateStorageFactory;
+    return new StateStorageFactory(rocksDBDirectory);
   }
 
   public StreamProcessor startStreamProcessor(
@@ -420,6 +419,7 @@ public class TestStreams {
         writer.keyNull();
       }
 
+      metadata.partitionId(logStream.getPartitionId());
       writer.metadataWriter(metadata);
       writer.valueWriter(value);
 
