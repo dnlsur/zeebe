@@ -286,11 +286,11 @@ public class MessageStreamProcessorTest {
 
     verify(mockSubscriptionCommandSender, timeout(5_000))
         .correlateWorkflowInstanceSubscription(
-            subscription.getWorkflowInstanceKey(),
-            subscription.getElementInstanceKey(),
-            subscription.getMessageNameBuffer(),
-            firstMessageKey,
-            message.getVariablesBuffer());
+            eq(subscription.getWorkflowInstanceKey()),
+            eq(subscription.getElementInstanceKey()),
+            eq(subscription.getMessageNameBuffer()),
+            eq(firstMessageKey),
+            eq(message.getVariablesBuffer()));
 
     verify(mockSubscriptionCommandSender, timeout(5_000))
         .correlateWorkflowInstanceSubscription(
