@@ -28,6 +28,7 @@ import io.zeebe.engine.processor.workflow.EngineProcessors;
 import io.zeebe.engine.processor.workflow.deployment.distribute.DeploymentDistributor;
 import io.zeebe.engine.processor.workflow.deployment.distribute.PendingDeploymentDistribution;
 import io.zeebe.engine.processor.workflow.message.command.PartitionCommandSender;
+import io.zeebe.engine.processor.workflow.message.command.SubscriptionCommandMessageHandler;
 import io.zeebe.engine.processor.workflow.message.command.SubscriptionCommandSender;
 import io.zeebe.engine.state.DefaultZeebeDbFactory;
 import io.zeebe.exporter.api.record.Record;
@@ -209,10 +210,18 @@ public class EngineRule extends ExternalResource implements StreamProcessorLifec
 
   private class PartitionCommandSenderImpl implements PartitionCommandSender {
 
+    private final SubscriptionCommandMessageHandler handler =
+        new SubscriptionCommandMessageHandler(Runnable::run, environmentRule::getLogStream);
+
     @Override
     public boolean sendCommand(int receiverPartitionId, BufferWriter command) {
-      //      environmentRule.writeCommand()
-      return false;
+
+      final byte[] bytes = new byte[command.getLength()];
+      final UnsafeBuffer commandBuffer = new UnsafeBuffer(bytes);
+      command.write(commandBuffer, 0);
+
+      handler.apply(bytes);
+      return true;
     }
   }
 

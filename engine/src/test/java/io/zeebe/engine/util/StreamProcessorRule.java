@@ -104,6 +104,10 @@ public class StreamProcessorRule implements TestRule {
     return chain.apply(base, description);
   }
 
+  public LogStream getLogStream(int partitionId) {
+    return streams.getLogStream(getLogName(partitionId));
+  }
+
   public StreamProcessor startTypedStreamProcessor(StreamProcessorTestFactory factory) {
     return startTypedStreamProcessor(
         (processingContext) -> {
